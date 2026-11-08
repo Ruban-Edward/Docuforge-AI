@@ -1,0 +1,104 @@
+services:
+  # ============================================================================
+  # 1. PostgreSQL Database Service
+  # ============================================================================
+  db:
+    image: postgres:16-alpine
+    container_name: docuforge_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-docuforge_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-docuforge_secure_password}
+      POSTGRES_DB: ${POSTGRES_DB:-docuforge_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-docuforge_user} -d ${POSTGRES_DB:-docuforge_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - docuforge_network
+
+  # ============================================================================
+  # 2. FastAPI Backend Service
+  # ============================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: docuforge_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-development}
+      - DEBUG=${DEBUG:-True}
+      - SECRET_KEY=${SECRET_KEY:-change-this-to-a-secure-random-secret-key-in-production-min-32-chars}
+      - ALGORITHM=${ALGORITHM:-HS256}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-docuforge_user}:${POSTGRES_PASSWORD:-docuforge_secure_password}@db:5432/${POSTGRES_DB:-docuforge_db}
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-docuforge_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-docuforge_secure_password}
+      - POSTGRES_DB=${POSTGRES_DB:-docuforge_db}
+      - STORAGE_ROOT=/app/storage
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000,http://127.0.0.1:5173}
+      - AI_PROVIDER=${AI_PROVIDER:-openai}
+      - AI_PROVIDER_API_KEY=${AI_PROVIDER_API_KEY:-}
+      - AI_MODEL_NAME=${AI_MODEL_NAME:-gpt-4o-mini}
+      - INITIAL_ADMIN_EMAIL=${INITIAL_ADMIN_EMAIL:-admin@docuforge.ai}
+      - INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME:-admin}
+      - INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:-DocuForgeAdmin2026!}
+      - INITIAL_ADMIN_FULL_NAME=${INITIAL_ADMIN_FULL_NAME:-System Administrator}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - docuforge_storage:/app/storage
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks:
+      - docuforge_network
+
+  # ============================================================================
+  # 3. React Frontend Service
+  # ============================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: docuforge_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "5173:5173"
+    networks:
+      - docuforge_network
+
+# ==============================================================================
+# Persistent Named Volumes and Isolated Network
+# ==============================================================================
+volumes:
+  postgres_data:
+    name: docuforge_postgres_data
+  docuforge_storage:
+    name: docuforge_storage_data
+
+networks:
+  docuforge_network:
+    name: docuforge_network
+    driver: bridge
+
